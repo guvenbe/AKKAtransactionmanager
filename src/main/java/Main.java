@@ -51,6 +51,11 @@ public class Main {
 
         Source<Integer, NotUsed> transactioIdSource = Source.fromIterator(() -> Stream.iterate(1, i -> i + 1).iterator());
 
+        Sink<Transfer, CompletionStage<Done>> transferLogger = Sink.foreach(transfer->{
+            System.out.println("Transfer from " + transfer.getFrom().getAccountNumber() +
+                    "to " + transfer.getTo().getAccountNumber() + " of " + transfer.getTo().getAmount());
+        });
+
         RunnableGraph<CompletionStage<Done>> graph = RunnableGraph.fromGraph(
                 GraphDSL.create(Sink.foreach(System.out::println), (builder, out) ->{
                     FanInShape2<Transaction, Integer,Transaction> assignTransactionIDs =
@@ -59,7 +64,7 @@ public class Main {
                                 return trans;
                             }));
                     builder.from(builder.add(transactioIdSource))
-                            .via(builder.add(generateTransfer))
+                            .via(builder.add(generateTransfer.alsoTo(transferLogger)))
                             .via(builder.add(getTransactionsFromTransfer))
                             .toInlet(assignTransactionIDs.in0());
 
