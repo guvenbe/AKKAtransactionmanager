@@ -1,14 +1,17 @@
+import akka.Done;
 import akka.NotUsed;
-import akka.stream.javadsl.Flow;
-import akka.stream.javadsl.Source;
+import akka.actor.typed.ActorSystem;
+import akka.actor.typed.javadsl.Behaviors;
+import akka.stream.ClosedShape;
+import akka.stream.FanInShape2;
+import akka.stream.javadsl.*;
 
 import java.math.BigDecimal;
 
 import java.time.Duration;
-import java.util.Date;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Random;
+import java.util.*;
+import java.util.concurrent.CompletionStage;
+import java.util.stream.Stream;
 
 public class Main {
 
@@ -43,6 +46,32 @@ public class Main {
             return new Transfer(from,to);
         });
 
+        Flow<Transfer, Transaction, NotUsed> getTransactionsFromTransfer = Flow.of(Transfer.class)
+                .mapConcat(transfer -> List.of(transfer.getFrom(), transfer.getTo()));
+
+        Source<Integer, NotUsed> transactioIdSource = Source.fromIterator(() -> Stream.iterate(1, i -> i + 1).iterator());
+
+        RunnableGraph<CompletionStage<Done>> graph = RunnableGraph.fromGraph(
+                GraphDSL.create(Sink.foreach(System.out::println), (builder, out) ->{
+                    FanInShape2<Transaction, Integer,Transaction> assignTransactionIDs =
+                            builder.add(ZipWith.create((trans, id)->{
+                                trans.setUniqueId(id);
+                                return trans;
+                            }));
+                    builder.from(builder.add(transactioIdSource))
+                            .via(builder.add(generateTransfer))
+                            .via(builder.add(getTransactionsFromTransfer))
+                            .toInlet(assignTransactionIDs.in0());
+
+                    builder.from(builder.add(transactioIdSource))
+                            .toInlet(assignTransactionIDs.in1());
+
+                    builder.from(assignTransactionIDs.out()).to(out);
+                    return ClosedShape.getInstance();
+                })
+        );
+        ActorSystem<Object> actorSystem = ActorSystem.create(Behaviors.empty(), "actorSystem");
+        graph.run(actorSystem);
 
     }
 }
