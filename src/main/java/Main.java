@@ -105,14 +105,17 @@ public class Main {
                     return SinkShape.of(entryFlow.in());
                 }
         );
-        RunnableGraph<CompletionStage<Done>> graph = RunnableGraph.fromGraph(
-                GraphDSL.create(sinkPartialGraph, (builder, out) -> {
-                    builder.from(builder.add(sourcePartialGraph))
-                            .to(out);
-                    return ClosedShape.getInstance();
-                })
-        );
+//        RunnableGraph<CompletionStage<Done>> graph = RunnableGraph.fromGraph(
+//                GraphDSL.create(sinkPartialGraph, (builder, out) -> {
+//                    builder.from(builder.add(sourcePartialGraph))
+//                            .to(out);
+//                    return ClosedShape.getInstance();
+//                })
+//        );
         ActorSystem actorSystem = ActorSystem.create(Behaviors.empty(), "actorSystem");
-        graph.run(actorSystem);
+//        graph.run(actorSystem);
+
+        Source<Transaction, NotUsed> newSource = Source.fromGraph(sourcePartialGraph);
+        newSource.to(sinkPartialGraph).run(actorSystem);
     }
 }
