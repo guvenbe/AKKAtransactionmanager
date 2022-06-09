@@ -56,6 +56,18 @@ public class Main {
                     "to " + transfer.getTo().getAccountNumber() + " of " + transfer.getTo().getAmount());
         });
 
+        Flow<Transaction, Transaction, NotUsed> applyTransactionsToAccount = Flow.of(Transaction.class).map(trans -> {
+            Account account = accounts.get(trans.getAccountNumber());
+            account.addTransaction(trans);
+            System.out.println("Account " + account.getId() + " now has balance of " + account.getBalance());
+
+            return trans;
+        });
+
+        Sink<Transaction, CompletionStage<Done>> rejectedTransactionSink = Sink.foreach(trans ->{
+            System.out.println("REJECTED transaction " + trans + " as account balance is "
+                    + accounts.get(trans.getAccountNumber()).getBalance());
+        });
         RunnableGraph<CompletionStage<Done>> graph = RunnableGraph.fromGraph(
                 GraphDSL.create(Sink.foreach(System.out::println), (builder, out) ->{
                     FanInShape2<Transaction, Integer,Transaction> assignTransactionIDs =
@@ -71,7 +83,14 @@ public class Main {
                     builder.from(builder.add(transactioIdSource))
                             .toInlet(assignTransactionIDs.in1());
 
-                    builder.from(assignTransactionIDs.out()).to(out);
+                    builder.from(assignTransactionIDs.out())
+                            .via(builder.add(Flow.of(Transaction.class).divertTo(rejectedTransactionSink, trans ->{
+                                Account account = accounts.get(trans.getAccountNumber());
+                                BigDecimal forecastBalance = account.getBalance().add(trans.getAmount());
+                                return (forecastBalance.compareTo(BigDecimal.ZERO) < 0);
+                            })))
+                            .via(builder.add(applyTransactionsToAccount))
+                            .to(out);
                     return ClosedShape.getInstance();
                 })
         );
