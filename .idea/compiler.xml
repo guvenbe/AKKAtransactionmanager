@@ -7,8 +7,12 @@
         <sourceTestOutputDir name="target/generated-test-sources/test-annotations" />
         <outputRelativeToContentRoot value="true" />
         <module name="AKKAtransactionmanager" />
+        <module name="transactionManager" />
         <module name="transactionmanager" />
       </profile>
     </annotationProcessing>
+    <bytecodeTargetLevel>
+      <module name="AKKAtransactionmanager" target="11" />
+    </bytecodeTargetLevel>
   </component>
 </project>

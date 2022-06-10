@@ -4,6 +4,8 @@ import akka.actor.typed.ActorSystem;
 import akka.actor.typed.javadsl.Behaviors;
 import akka.stream.*;
 import akka.stream.javadsl.*;
+import akka.stream.typed.javadsl.ActorFlow;
+import akka.stream.typed.javadsl.ActorSink;
 
 import java.math.BigDecimal;
 
@@ -16,15 +18,7 @@ public class Main {
 
 
     public static void main(String[] args) {
-
-        Map<Integer, Account> accounts = new HashMap<>();
-
-        //set up accounts
-        for (int i = 1; i <= 10; i++) {
-            accounts.put(i, new Account(i, new BigDecimal(1000)));
-        }
-
-        //source to generate 1 transaction every second
+       //source to generate 1 transaction every second
         Source<Integer, NotUsed> source = Source.repeat(1).throttle(1, Duration.ofSeconds(10));
 
         //flow to create a random transfer
@@ -54,18 +48,9 @@ public class Main {
                     "to " + transfer.getTo().getAccountNumber() + " of " + transfer.getTo().getAmount());
         });
 
-        Flow<Transaction, Transaction, NotUsed> applyTransactionsToAccount = Flow.of(Transaction.class).map(trans -> {
-            Account account = accounts.get(trans.getAccountNumber());
-            account.addTransaction(trans);
-            System.out.println("Account " + account.getId() + " now has balance of " + account.getBalance());
 
-            return trans;
-        });
 
-        Sink<Transaction, CompletionStage<Done>> rejectedTransactionSink = Sink.foreach(trans -> {
-            System.out.println("REJECTED transaction " + trans + " as account balance is "
-                    + accounts.get(trans.getAccountNumber()).getBalance());
-        });
+
 
 
         Graph<SourceShape<Transaction>, NotUsed> sourcePartialGraph = GraphDSL.create(
@@ -89,33 +74,35 @@ public class Main {
                 }
         );
 
-        Graph<SinkShape<Transaction>, CompletionStage<Done>> sinkPartialGraph = GraphDSL.create(
-                Sink.foreach(System.out::println), (builder, out) -> {
-                    FlowShape<Transaction, Transaction> entryFlow =
-                            builder.add(Flow.of(Transaction.class)
-                                    .divertTo(rejectedTransactionSink, trans -> {
-                                        Account account = accounts.get(trans.getAccountNumber());
-                                        BigDecimal forecastBalance = account.getBalance().add(trans.getAmount());
-                                        return (forecastBalance.compareTo(BigDecimal.ZERO) < 0);
-                                    }));
 
-                    builder.from(entryFlow)
-                            .via(builder.add(applyTransactionsToAccount))
-                            .to(out);
-                    return SinkShape.of(entryFlow.in());
-                }
-        );
-//        RunnableGraph<CompletionStage<Done>> graph = RunnableGraph.fromGraph(
-//                GraphDSL.create(sinkPartialGraph, (builder, out) -> {
-//                    builder.from(builder.add(sourcePartialGraph))
-//                            .to(out);
-//                    return ClosedShape.getInstance();
-//                })
-//        );
-        ActorSystem actorSystem = ActorSystem.create(Behaviors.empty(), "actorSystem");
-//        graph.run(actorSystem);
+        ActorSystem<AccountManager.AccountManagerCommand> accountManager
+                = ActorSystem.create(AccountManager.create(), "accountManager");
+
+        Flow<Transaction, AccountManager.AddTransactionResponse, NotUsed> attemptToApplyTransaction =
+                ActorFlow.ask(accountManager,Duration.ofSeconds(10), (trans, self) -> {
+                    return new AccountManager.AddTransactionCommand(trans,self);
+                });
+
+        Sink<AccountManager.AddTransactionResponse, CompletionStage<Done>> rejectedTransactionSink = Sink.foreach(trans -> {
+            System.out.println("**************************REJECTED transaction " + trans.getTransaction());
+        });
+
+        Flow<AccountManager.AddTransactionResponse, AccountManager.AccountManagerCommand, NotUsed>
+                receiveResult = Flow.of(AccountManager.AddTransactionResponse.class).map(result ->{
+            System.out.println("Logging " + result.getTransaction());
+            return new AccountManager.DisplayBalanceCommand(result.getTransaction().getAccountNumber());
+        });
+
+        Sink<AccountManager.AccountManagerCommand, NotUsed> displayBalanceSink =
+                ActorSink.actorRef(accountManager, new AccountManager.CompleteCommand(), (throwable) -> new AccountManager.FailedCommand());
 
         Source<Transaction, NotUsed> newSource = Source.fromGraph(sourcePartialGraph);
-        newSource.to(sinkPartialGraph).run(actorSystem);
+
+        newSource.via(attemptToApplyTransaction
+                        .divertTo(rejectedTransactionSink, result -> !result.getSucceeded())
+                )
+                        .via(receiveResult)
+                                .to(displayBalanceSink).run(accountManager);
+
     }
 }
